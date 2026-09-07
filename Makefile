@@ -1,7 +1,7 @@
 CC = clang
 CFLAGS = -std=c17 -Wall -Wextra -Wpedantic \
          -fsanitize=address,undefined -g -Iinclude
-SRC = src/main.c src/server.c src/buffer.c
+SRC = src/main.c src/server.c src/buffer.c src/resp.c src/parser.c src/command.c
 BIN = reddb
 
 $(BIN): $(SRC)

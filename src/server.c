@@ -1,4 +1,9 @@
 #include "server.h"
+#include "buffer.h"
+#include "command.h"
+#include "parser.h"
+#include "resp.h"
+
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <stdio.h>
@@ -43,20 +48,43 @@ int run_server(int port) {
         }
 
         printf("got a client, fd = %d\n", client_fd);
-        send(client_fd, "connection successful\n",
-             strlen("connection successful\n"), 0);
 
-        char buf[1024];
+        buffer_t in;
+        buf_init(&in);
+        buffer_t out;
+        buf_init(&out);
+
+        char scratch[1024];
         ssize_t n;
 
-        while ((n = recv(client_fd, buf, sizeof(buf), 0)) > 0) {
-            printf("received %zd bytes: %.*s\n", n, (int)n, buf);
-            send(client_fd, buf, (size_t)n, 0);
+        while ((n = recv(client_fd, scratch, sizeof(scratch), 0)) > 0) {
+            printf("received %zd bytes: %.*s\n", n, (int)n, scratch);
+            buf_append(&in, scratch, (size_t)n);
+            for (;;) {
+                ParseResult r = parse(&in);
+                if (r.status == INCOMPLETE) {
+                    break;
+                } else if (r.status == INVALID) {
+                    resp_write_error(&out, "ERR could not be parsed");
+                    break;
+                } else {
+                    dispatch(r.argv, r.argc, &out);
+                    buf_consume(&in, r.bytes_consumed);
+                }
+                parseResult_free(&r);
+            }
+            if (out.len > 0) {
+                send(client_fd, out.data, out.len, 0);
+                out.len = 0;
+            }
         }
 
         if (n < 0) {
             perror("recv");
         }
+
+        buf_free(&in);
+        buf_free(&out);
 
         close(client_fd);
     }
