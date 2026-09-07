@@ -9,12 +9,12 @@ void buf_init(buffer_t* b) {
     b->cap = 0;
 }
 
-void buf_append(buffer_t* b, const char* src, size_t n) {
+void buf_append(buffer_t* b, const char* src, usize n) {
 
     if (b->len + n > b->cap) {
 
-        size_t required = b->len + n;
-        size_t new_cap = (b->cap == 0) ? 16 : b->cap * 2;
+        usize required = b->len + n;
+        usize new_cap = (b->cap == 0) ? 16 : b->cap * 2;
 
         if (new_cap < required) {
             new_cap = required;
@@ -41,7 +41,7 @@ void buf_free(buffer_t* b) {
     b->cap = 0;
 }
 
-bool buf_consume(buffer_t* b, size_t n) {
+b8 buf_consume(buffer_t* b, usize n) {
 
     if (n > b->len) {
         return false;

@@ -15,7 +15,7 @@ void resp_write_error(buffer_t* out, const char* msg) {
     buf_append(out, msg, strlen(msg));
     buf_append(out, "\r\n", strlen("\r\n"));
 }
-void resp_write_bulk(buffer_t* out, const char* s, size_t len) {
+void resp_write_bulk(buffer_t* out, const char* s, usize len) {
 
     buf_append(out, "$", strlen("$"));
 

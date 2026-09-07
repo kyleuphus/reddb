@@ -1,9 +1,10 @@
 #include "command.h"
 #include "resp.h"
 
+#include <string.h>
 #include <strings.h>
 
-void dispatch(char** argv, int argc, buffer_t* out) {
+void dispatch(char** argv, i32 argc, buffer_t* out) {
 
     if (argc == 0) {
         return;

@@ -11,7 +11,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-int run_server(int port) {
+int run_server(u16 port) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
         perror("socket");
@@ -59,7 +59,7 @@ int run_server(int port) {
 
         while ((n = recv(client_fd, scratch, sizeof(scratch), 0)) > 0) {
             printf("received %zd bytes: %.*s\n", n, (int)n, scratch);
-            buf_append(&in, scratch, (size_t)n);
+            buf_append(&in, scratch, (usize)n);
             for (;;) {
                 ParseResult r = parse(&in);
                 if (r.status == INCOMPLETE) {

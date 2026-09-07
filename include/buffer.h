@@ -1,18 +1,17 @@
 #ifndef BUFFER_H
 #define BUFFER_H
 
-#include <stdbool.h>
-#include <stddef.h>
+#include "types.h"
 
 typedef struct {
     char* data;
-    size_t len;
-    size_t cap;
+    usize len;
+    usize cap;
 } buffer_t;
 
 void buf_init(buffer_t* b);
-void buf_append(buffer_t* b, const char* src, size_t n);
+void buf_append(buffer_t* b, const char* src, usize n);
 void buf_free(buffer_t* b);
-bool buf_consume(buffer_t* b, size_t n);
+b8 buf_consume(buffer_t* b, usize n);
 
 #endif

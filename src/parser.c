@@ -8,23 +8,23 @@
 void parseResult_init(ParseResult* p) {
     p->status = INCOMPLETE;
     p->argc = 0;
-    for (int i = 0; i < MAX_ARGS; i++) {
+    for (i32 i = 0; i < MAX_ARGS; i++) {
         p->argv[i] = NULL;
     }
     p->bytes_consumed = 0;
 }
 
 void parseResult_free(ParseResult* p) {
-    for (int i = 0; i < p->argc; i++) {
+    for (i32 i = 0; i < p->argc; i++) {
         free(p->argv[i]);
         p->argv[i] = NULL;
     }
     p->argc = 0;
 }
 
-int findTerminator(buffer_t* b, size_t offset) {
+isize findTerminator(buffer_t* b, usize offset) {
 
-    for (size_t i = offset; i + 1 < b->len; i++) {
+    for (usize i = offset; i + 1 < b->len; i++) {
 
         if (b->data[i] == '\r' && b->data[i + 1] == '\n') {
             return i;
@@ -34,9 +34,9 @@ int findTerminator(buffer_t* b, size_t offset) {
     return -1;
 }
 
-bool readBulk(buffer_t* b, ParseResult* out, size_t offset, size_t* consumed) {
+b8 readBulk(buffer_t* b, ParseResult* out, usize offset, usize* consumed) {
 
-    bool status = false;
+    b8 status = false;
 
     if (offset >= b->len) {
         out->status = INCOMPLETE;
@@ -45,13 +45,13 @@ bool readBulk(buffer_t* b, ParseResult* out, size_t offset, size_t* consumed) {
         out->status = INVALID;
         return status;
     } else {
-        int terminator = findTerminator(b, offset);
+        isize terminator = findTerminator(b, offset);
         if (terminator == -1) {
             out->status = INCOMPLETE;
             return status;
         } else {
             char tmp[16];
-            size_t slice_len = terminator - offset - 1;
+            usize slice_len = terminator - offset - 1;
 
             if (slice_len >= sizeof(tmp)) {
                 out->status = INVALID;
@@ -70,7 +70,7 @@ bool readBulk(buffer_t* b, ParseResult* out, size_t offset, size_t* consumed) {
                 return status;
             }
 
-            size_t s_len = (size_t)len;
+            usize s_len = (usize)len;
 
             if (terminator + 2 + s_len + 2 > b->len) {
                 out->status = INCOMPLETE;
@@ -102,9 +102,9 @@ bool readBulk(buffer_t* b, ParseResult* out, size_t offset, size_t* consumed) {
     return status;
 }
 
-bool readArray(buffer_t* b, ParseResult* out) {
+b8 readArray(buffer_t* b, ParseResult* out) {
 
-    bool status = false;
+    b8 status = false;
     if (b->len == 0) {
         out->status = INCOMPLETE;
         return status;
@@ -112,13 +112,13 @@ bool readArray(buffer_t* b, ParseResult* out) {
         out->status = INVALID;
         return status;
     } else {
-        int terminator = findTerminator(b, (size_t)0);
+        isize terminator = findTerminator(b, (usize)0);
         if (terminator == -1) {
             out->status = INCOMPLETE;
             return status;
         } else {
             char tmp[16];
-            size_t slice_len = terminator - 1;
+            usize slice_len = terminator - 1;
 
             if (slice_len >= sizeof(tmp)) {
                 out->status = INVALID;
@@ -137,13 +137,13 @@ bool readArray(buffer_t* b, ParseResult* out) {
                 return status;
             }
 
-            int amount = (int)lamount;
-            int callCount = 0;
-            size_t consumed = (size_t)(terminator + 2);
+            i32 amount = (i32)lamount;
+            i32 callCount = 0;
+            usize consumed = (usize)(terminator + 2);
 
             while (callCount < amount) {
-                bool valid;
-                size_t temp;
+                b8 valid;
+                usize temp;
                 valid = readBulk(b, out, consumed, &temp);
                 callCount++;
                 if (!valid) {
