@@ -40,3 +40,14 @@ void buf_free(buffer_t* b) {
     b->len = 0;
     b->cap = 0;
 }
+
+bool buf_consume(buffer_t* b, size_t n) {
+
+    if (n > b->len) {
+        return false;
+    }
+
+    memmove(b->data, b->data + n, b->len - n);
+    b->len -= n;
+    return true;
+}
