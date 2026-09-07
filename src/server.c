@@ -58,14 +58,17 @@ int run_server(u16 port) {
         ssize_t n;
 
         while ((n = recv(client_fd, scratch, sizeof(scratch), 0)) > 0) {
-            printf("received %zd bytes: %.*s\n", n, (int)n, scratch);
             buf_append(&in, scratch, (usize)n);
+            b8 valid = true;
             for (;;) {
                 ParseResult r = parse(&in);
                 if (r.status == INCOMPLETE) {
+                    parseResult_free(&r);
                     break;
                 } else if (r.status == INVALID) {
                     resp_write_error(&out, "ERR could not be parsed");
+                    valid = false;
+                    parseResult_free(&r);
                     break;
                 } else {
                     dispatch(r.argv, r.argc, &out);
@@ -76,6 +79,9 @@ int run_server(u16 port) {
             if (out.len > 0) {
                 send(client_fd, out.data, out.len, 0);
                 out.len = 0;
+            }
+            if (!valid) {
+                break;
             }
         }
 
