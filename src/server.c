@@ -1,6 +1,7 @@
 #include "server.h"
 #include "buffer.h"
 #include "command.h"
+#include "hashtable.h"
 #include "parser.h"
 #include "resp.h"
 
@@ -38,6 +39,8 @@ int run_server(u16 port) {
 
     printf("listening on port %d\n", port);
 
+    ht* t = ht_create();
+
     for (;;) {
 
         int client_fd = accept(fd, NULL, NULL);
@@ -71,7 +74,7 @@ int run_server(u16 port) {
                     parseResult_free(&r);
                     break;
                 } else {
-                    dispatch(r.argv, r.arglen, r.argc, &out);
+                    dispatch(r.argv, r.arglen, r.argc, &out, t);
                     buf_consume(&in, r.bytes_consumed);
                 }
                 parseResult_free(&r);
