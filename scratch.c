@@ -1,18 +1,30 @@
-#include "buffer.h"
-#include "command.h"
-#include "parser.h"
-#include "resp.h"
+// #include "buffer.h"
+// #include "command.h"
+#include "hashtable.h"
+// #include "parser.h"
+// #include "resp.h"
 #include <stdio.h>
 #include <string.h>
 
 int main(void) {
 
-    buffer_t b;
-    buf_init(&b);
+    ht* t = ht_create();
+    const char* key = "kyle";
+    const char* value = "sophomore";
+    ht_set(t, key, strlen(key), value, strlen(value));
 
-    resp_write_null(&b);
+    usize* outlen;
+    const char* rec = ht_get(t, key, strlen(key), outlen);
 
-    printf("%.*s", (int)b.len, b.data);
+    printf("%.*s\n", (int)outlen, rec);
+
+    key = "kyle";
+    value = "junior";
+
+    ht_set(t, key, strlen(key), value, strlen(value));
+
+    rec = ht_get(t, key, strlen(key), outlen);
+    printf("%.*s\n", (int)outlen, rec);
 
     return 0;
 }

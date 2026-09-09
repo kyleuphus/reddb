@@ -20,6 +20,8 @@ typedef ptrdiff_t isize;
 
 typedef bool b8;
 
+typedef unsigned char uchar;
+
 _Static_assert(sizeof(u64) == 8, "u64 must be 8 bytes");
 _Static_assert(sizeof(usize) == sizeof(void*), "usize must hold a pointer");
 
