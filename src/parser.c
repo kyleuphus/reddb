@@ -11,6 +11,9 @@ void parseResult_init(ParseResult* p) {
     for (i32 i = 0; i < MAX_ARGS; i++) {
         p->argv[i] = NULL;
     }
+    for (i32 i = 0; i < MAX_ARGS; i++) {
+        p->arglen[i] = 0;
+    }
     p->bytes_consumed = 0;
 }
 
@@ -92,6 +95,7 @@ b8 readBulk(buffer_t* b, ParseResult* out, usize offset, usize* consumed) {
                 memcpy(copy, b->data + terminator + 2, s_len);
                 copy[s_len] = '\0';
                 out->argv[out->argc] = copy;
+                out->arglen[out->argc] = s_len;
                 out->argc++;
 
                 status = true;

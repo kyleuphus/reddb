@@ -3,6 +3,5 @@
 #include "buffer.h"
 #include "types.h"
 
-void dispatch(char** argv, i32 argc, buffer_t* out);
-
+void dispatch(char** argv, usize* arglen, i32 argc, buffer_t* out);
 #endif

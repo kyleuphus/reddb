@@ -71,7 +71,7 @@ int run_server(u16 port) {
                     parseResult_free(&r);
                     break;
                 } else {
-                    dispatch(r.argv, r.argc, &out);
+                    dispatch(r.argv, r.arglen, r.argc, &out);
                     buf_consume(&in, r.bytes_consumed);
                 }
                 parseResult_free(&r);

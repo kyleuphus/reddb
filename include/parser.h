@@ -13,6 +13,7 @@ typedef struct {
     Status status;
     i32 argc;
     char* argv[MAX_ARGS];
+    usize arglen[MAX_ARGS];
     usize bytes_consumed;
 } ParseResult;
 
