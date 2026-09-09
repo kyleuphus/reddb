@@ -1,4 +1,5 @@
 #include "resp.h"
+#include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -15,6 +16,7 @@ void resp_write_error(buffer_t* out, const char* msg) {
     buf_append(out, msg, strlen(msg));
     buf_append(out, "\r\n", strlen("\r\n"));
 }
+
 void resp_write_bulk(buffer_t* out, const char* s, usize len) {
 
     buf_append(out, "$", strlen("$"));
@@ -25,4 +27,14 @@ void resp_write_bulk(buffer_t* out, const char* s, usize len) {
 
     buf_append(out, s, len);
     buf_append(out, "\r\n", strlen("\r\n"));
+}
+
+void resp_write_integer(buffer_t* out, i64 n) {
+    char buffer[32];
+    snprintf(buffer, sizeof(buffer), ":%" PRId64 "\r\n", n);
+    buf_append(out, buffer, strlen(buffer));
+}
+
+void resp_write_null(buffer_t* out) {
+    buf_append(out, "$-1\r\n", strlen("$-1\r\n"));
 }
