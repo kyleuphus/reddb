@@ -5,8 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-void parseResult_init(ParseResult* p) {
-    p->status = INCOMPLETE;
+void parse_result_init(parse_result* p) {
+    p->status = PARSE_INCOMPLETE;
     p->argc = 0;
     for (i32 i = 0; i < MAX_ARGS; i++) {
         p->argv[i] = NULL;
@@ -17,7 +17,7 @@ void parseResult_init(ParseResult* p) {
     p->bytes_consumed = 0;
 }
 
-void parseResult_free(ParseResult* p) {
+void parse_result_free(parse_result* p) {
     for (i32 i = 0; i < p->argc; i++) {
         free(p->argv[i]);
         p->argv[i] = NULL;
@@ -25,7 +25,7 @@ void parseResult_free(ParseResult* p) {
     p->argc = 0;
 }
 
-isize findTerminator(buffer_t* b, usize offset) {
+isize parse_find_crlf(buffer* b, usize offset) {
 
     for (usize i = offset; i + 1 < b->len; i++) {
 
@@ -37,27 +37,27 @@ isize findTerminator(buffer_t* b, usize offset) {
     return -1;
 }
 
-b8 readBulk(buffer_t* b, ParseResult* out, usize offset, usize* consumed) {
+b8 parse_bulk(buffer* b, parse_result* out, usize offset, usize* consumed) {
 
     b8 status = false;
 
     if (offset >= b->len) {
-        out->status = INCOMPLETE;
+        out->status = PARSE_INCOMPLETE;
         return status;
     } else if (b->data[offset] != '$') {
-        out->status = INVALID;
+        out->status = PARSE_INVALID;
         return status;
     } else {
-        isize terminator = findTerminator(b, offset);
+        isize terminator = parse_find_crlf(b, offset);
         if (terminator == -1) {
-            out->status = INCOMPLETE;
+            out->status = PARSE_INCOMPLETE;
             return status;
         } else {
             char tmp[16];
             usize slice_len = terminator - offset - 1;
 
             if (slice_len >= sizeof(tmp)) {
-                out->status = INVALID;
+                out->status = PARSE_INVALID;
                 return status;
             }
 
@@ -69,26 +69,26 @@ b8 readBulk(buffer_t* b, ParseResult* out, usize offset, usize* consumed) {
 
             if (endptr == tmp || endptr != tmp + slice_len || len < 0 ||
                 len > INT_MAX) {
-                out->status = INVALID;
+                out->status = PARSE_INVALID;
                 return status;
             }
 
             usize s_len = (usize)len;
 
             if (terminator + 2 + s_len + 2 > b->len) {
-                out->status = INCOMPLETE;
+                out->status = PARSE_INCOMPLETE;
                 return status;
             }
 
             if (b->data[terminator + 2 + s_len] != '\r' ||
                 b->data[terminator + 2 + s_len + 1] != '\n') {
-                out->status = INVALID;
+                out->status = PARSE_INVALID;
                 return status;
             } else {
                 char* copy = malloc(s_len + 1);
 
                 if (copy == NULL) {
-                    out->status = INVALID;
+                    out->status = PARSE_INVALID;
                     return status;
                 }
 
@@ -106,26 +106,26 @@ b8 readBulk(buffer_t* b, ParseResult* out, usize offset, usize* consumed) {
     return status;
 }
 
-b8 readArray(buffer_t* b, ParseResult* out) {
+b8 parse_array(buffer* b, parse_result* out) {
 
     b8 status = false;
     if (b->len == 0) {
-        out->status = INCOMPLETE;
+        out->status = PARSE_INCOMPLETE;
         return status;
     } else if (b->data[0] != '*') {
-        out->status = INVALID;
+        out->status = PARSE_INVALID;
         return status;
     } else {
-        isize terminator = findTerminator(b, (usize)0);
+        isize terminator = parse_find_crlf(b, (usize)0);
         if (terminator == -1) {
-            out->status = INCOMPLETE;
+            out->status = PARSE_INCOMPLETE;
             return status;
         } else {
             char tmp[16];
             usize slice_len = terminator - 1;
 
             if (slice_len >= sizeof(tmp)) {
-                out->status = INVALID;
+                out->status = PARSE_INVALID;
                 return status;
             }
 
@@ -133,44 +133,44 @@ b8 readArray(buffer_t* b, ParseResult* out) {
             tmp[slice_len] = '\0';
 
             char* endptr;
-            long lamount = strtol(tmp, &endptr, 10);
+            long raw_argc = strtol(tmp, &endptr, 10);
 
-            if (endptr == tmp || endptr != tmp + slice_len || lamount < 0 ||
-                lamount > MAX_ARGS) {
-                out->status = INVALID;
+            if (endptr == tmp || endptr != tmp + slice_len || raw_argc < 0 ||
+                raw_argc > MAX_ARGS) {
+                out->status = PARSE_INVALID;
                 return status;
             }
 
-            i32 amount = (i32)lamount;
-            i32 callCount = 0;
+            i32 argc = (i32)raw_argc;
+            i32 args_read = 0;
             usize consumed = (usize)(terminator + 2);
 
-            while (callCount < amount) {
+            while (args_read < argc) {
                 b8 valid;
-                usize temp;
-                valid = readBulk(b, out, consumed, &temp);
-                callCount++;
+                usize bulk_consumed;
+                valid = parse_bulk(b, out, consumed, &bulk_consumed);
+                args_read++;
                 if (!valid) {
-                    parseResult_free(out);
+                    parse_result_free(out);
                     return status;
                 }
-                consumed += temp;
+                consumed += bulk_consumed;
             }
 
             out->bytes_consumed = consumed;
-            out->status = COMPLETE;
+            out->status = PARSE_COMPLETE;
             status = true;
             return status;
         }
     }
 }
 
-ParseResult parse(buffer_t* b) {
+parse_result parse_command(buffer* b) {
 
-    ParseResult result;
-    parseResult_init(&result);
+    parse_result result;
+    parse_result_init(&result);
 
-    readArray(b, &result);
+    parse_array(b, &result);
 
     return result;
 }

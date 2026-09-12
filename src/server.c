@@ -7,12 +7,43 @@
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <signal.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
-int run_server(u16 port) {
+void client_init(client* c, i32 fd) {
+    c->mask = 0;
+    c->fd = fd;
+    buf_init(&c->in);
+    buf_init(&c->out);
+    c->out_sent = 0;
+}
+
+b8 client_process_input(client* c, ht* db) {
+    b8 valid = true;
+    for (;;) {
+        parse_result r = parse_command(&c->in);
+        if (r.status == PARSE_INCOMPLETE) {
+            parse_result_free(&r);
+            break;
+        } else if (r.status == PARSE_INVALID) {
+            resp_write_error(&c->out, "ERR could not be parsed");
+            valid = false;
+            parse_result_free(&r);
+            break;
+        } else {
+            command_dispatch(r.argv, r.arglen, r.argc, &c->out, db);
+            buf_consume(&c->in, r.bytes_consumed);
+        }
+        parse_result_free(&r);
+    }
+    return valid;
+}
+
+int server_run(u16 port) {
+    signal(SIGPIPE, SIG_IGN);
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
         perror("socket");
@@ -39,7 +70,7 @@ int run_server(u16 port) {
 
     printf("listening on port %d\n", port);
 
-    ht* t = ht_create();
+    ht* db = ht_create();
 
     for (;;) {
 
@@ -52,36 +83,20 @@ int run_server(u16 port) {
 
         printf("got a client, fd = %d\n", client_fd);
 
-        buffer_t in;
-        buf_init(&in);
-        buffer_t out;
-        buf_init(&out);
+        client c;
+        client_init(&c, client_fd);
 
-        char scratch[1024];
+        char scratch[1024 * 16];
         ssize_t n;
 
         while ((n = recv(client_fd, scratch, sizeof(scratch), 0)) > 0) {
-            buf_append(&in, scratch, (usize)n);
-            b8 valid = true;
-            for (;;) {
-                ParseResult r = parse(&in);
-                if (r.status == INCOMPLETE) {
-                    parseResult_free(&r);
-                    break;
-                } else if (r.status == INVALID) {
-                    resp_write_error(&out, "ERR could not be parsed");
-                    valid = false;
-                    parseResult_free(&r);
-                    break;
-                } else {
-                    dispatch(r.argv, r.arglen, r.argc, &out, t);
-                    buf_consume(&in, r.bytes_consumed);
-                }
-                parseResult_free(&r);
-            }
-            if (out.len > 0) {
-                send(client_fd, out.data, out.len, 0);
-                out.len = 0;
+            buf_append(&c.in, scratch, (usize)n);
+
+            b8 valid = client_process_input(&c, db);
+
+            if (c.out.len > 0) {
+                send(client_fd, c.out.data, c.out.len, 0);
+                c.out.len = 0;
             }
             if (!valid) {
                 break;
@@ -92,8 +107,8 @@ int run_server(u16 port) {
             perror("recv");
         }
 
-        buf_free(&in);
-        buf_free(&out);
+        buf_free(&c.in);
+        buf_free(&c.out);
 
         close(client_fd);
     }

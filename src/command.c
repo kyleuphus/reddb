@@ -9,7 +9,8 @@
 #include <string.h>
 #include <strings.h>
 
-void dispatch(char** argv, usize* arglen, i32 argc, buffer_t* out, ht* t) {
+void command_dispatch(char** argv, usize* arglen, i32 argc, buffer* out,
+                      ht* db) {
 
     if (argc == 0) {
         return;
@@ -33,7 +34,7 @@ void dispatch(char** argv, usize* arglen, i32 argc, buffer_t* out, ht* t) {
         }
     } else if (strcasecmp(argv[0], "SET") == 0) {
         if (argc == 3) {
-            if (ht_set(t, argv[1], arglen[1], argv[2], arglen[2])) {
+            if (ht_set(db, argv[1], arglen[1], argv[2], arglen[2])) {
                 resp_write_simple(out, "OK");
             } else {
                 resp_write_error(out, "ERR out of memory");
@@ -45,7 +46,7 @@ void dispatch(char** argv, usize* arglen, i32 argc, buffer_t* out, ht* t) {
     } else if (strcasecmp(argv[0], "GET") == 0) {
         usize outlen;
         if (argc == 2) {
-            const char* value = ht_get(t, argv[1], arglen[1], &outlen);
+            const char* value = ht_get(db, argv[1], arglen[1], &outlen);
             if (value != NULL) {
                 resp_write_bulk(out, value, outlen);
             } else {
@@ -57,7 +58,7 @@ void dispatch(char** argv, usize* arglen, i32 argc, buffer_t* out, ht* t) {
         }
     } else if (strcasecmp(argv[0], "DEL") == 0) {
         if (argc == 2) {
-            if (ht_delete(t, argv[1], arglen[1])) {
+            if (ht_delete(db, argv[1], arglen[1])) {
                 resp_write_integer(out, 1);
             } else {
                 resp_write_integer(out, 0);
@@ -69,7 +70,7 @@ void dispatch(char** argv, usize* arglen, i32 argc, buffer_t* out, ht* t) {
     } else if (strcasecmp(argv[0], "EXISTS") == 0) {
         usize outlen;
         if (argc == 2) {
-            if (ht_get(t, argv[1], arglen[1], &outlen) != NULL) {
+            if (ht_get(db, argv[1], arglen[1], &outlen) != NULL) {
                 resp_write_integer(out, 1);
             } else {
                 resp_write_integer(out, 0);
@@ -82,11 +83,11 @@ void dispatch(char** argv, usize* arglen, i32 argc, buffer_t* out, ht* t) {
     } else if (strcasecmp(argv[0], "INCR") == 0) {
         usize outlen;
         if (argc == 2) {
-            const char* value = ht_get(t, argv[1], arglen[1], &outlen);
+            const char* value = ht_get(db, argv[1], arglen[1], &outlen);
             char tmp[32];
 
             if (value == NULL) {
-                if (ht_set(t, argv[1], arglen[1], "1", 1)) {
+                if (ht_set(db, argv[1], arglen[1], "1", 1)) {
                     resp_write_integer(out, 1);
                 } else {
                     resp_write_error(out, "ERR out of memory");
@@ -121,7 +122,7 @@ void dispatch(char** argv, usize* arglen, i32 argc, buffer_t* out, ht* t) {
                     ivalue++;
                     char int_str[32];
                     snprintf(int_str, sizeof(int_str), "%" PRId64, ivalue);
-                    if (ht_set(t, argv[1], arglen[1], int_str,
+                    if (ht_set(db, argv[1], arglen[1], int_str,
                                strlen(int_str))) {
                         resp_write_integer(out, ivalue);
                     } else {

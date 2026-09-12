@@ -21,5 +21,5 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    return run_server((u16)port);
+    return server_run((u16)port);
 }

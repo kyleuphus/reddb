@@ -20,7 +20,7 @@ struct ht {
     node** buckets;
 };
 
-static u64 hash_key(const char* key, usize klen) {
+static u64 ht_hash(const char* key, usize klen) {
 
     u64 hash = FNV_OFFSET;
     const char* p = key;
@@ -81,10 +81,11 @@ void ht_free(ht* t) {
     free(t);
 }
 
-static b8 ht_set_key(node** buckets, usize cap, const char* key, usize klen,
-                     const char* value, usize vlen, b8* inserted) {
+static b8 ht_bucket_insert(node** buckets, usize cap, const char* key,
+                           usize klen, const char* value, usize vlen,
+                           b8* inserted) {
 
-    u64 hash = hash_key(key, klen);
+    u64 hash = ht_hash(key, klen);
     usize index = (usize)(hash & (u64)(cap - 1));
     node* n = buckets[index];
 
@@ -173,7 +174,7 @@ static b8 ht_grow(ht* t) {
 
         while (current != NULL) {
             node* next = current->next;
-            usize index = hash_key(current->key, current->klen) & (new_cap - 1);
+            usize index = ht_hash(current->key, current->klen) & (new_cap - 1);
             current->next = new_buckets[index];
             new_buckets[index] = current;
             current = next;
@@ -189,7 +190,7 @@ static b8 ht_grow(ht* t) {
 
 const char* ht_get(ht* t, const char* key, usize klen, usize* outlen) {
 
-    u64 hash = hash_key(key, klen);
+    u64 hash = ht_hash(key, klen);
     usize index = (usize)(hash & (u64)(t->capacity - 1));
 
     if (t->buckets[index] == NULL) {
@@ -226,8 +227,8 @@ b8 ht_set(ht* t, const char* key, usize klen, const char* value, usize vlen) {
 
     b8 inserted;
 
-    if (!ht_set_key(t->buckets, t->capacity, key, klen, value, vlen,
-                    &inserted)) {
+    if (!ht_bucket_insert(t->buckets, t->capacity, key, klen, value, vlen,
+                          &inserted)) {
         return false;
     }
 
@@ -240,7 +241,7 @@ b8 ht_set(ht* t, const char* key, usize klen, const char* value, usize vlen) {
 
 b8 ht_delete(ht* t, const char* key, usize klen) {
 
-    u64 hash = hash_key(key, klen);
+    u64 hash = ht_hash(key, klen);
     usize index = (usize)(hash & (u64)(t->capacity - 1));
 
     if (t->buckets[index] == NULL) {

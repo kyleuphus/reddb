@@ -7,11 +7,11 @@ typedef struct {
     char* data;
     usize len;
     usize cap;
-} buffer_t;
+} buffer;
 
-void buf_init(buffer_t* b);
-void buf_append(buffer_t* b, const char* src, usize n);
-void buf_free(buffer_t* b);
-b8 buf_consume(buffer_t* b, usize n);
+void buf_init(buffer* b);
+void buf_append(buffer* b, const char* src, usize n);
+void buf_free(buffer* b);
+b8 buf_consume(buffer* b, usize n);
 
 #endif

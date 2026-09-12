@@ -3,13 +3,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-void buf_init(buffer_t* b) {
+void buf_init(buffer* b) {
     b->data = NULL;
     b->len = 0;
     b->cap = 0;
 }
 
-void buf_append(buffer_t* b, const char* src, usize n) {
+void buf_append(buffer* b, const char* src, usize n) {
 
     if (b->len + n > b->cap) {
 
@@ -34,14 +34,14 @@ void buf_append(buffer_t* b, const char* src, usize n) {
     b->len += n;
 }
 
-void buf_free(buffer_t* b) {
+void buf_free(buffer* b) {
     free(b->data);
     b->data = NULL;
     b->len = 0;
     b->cap = 0;
 }
 
-b8 buf_consume(buffer_t* b, usize n) {
+b8 buf_consume(buffer* b, usize n) {
 
     if (n > b->len) {
         return false;
