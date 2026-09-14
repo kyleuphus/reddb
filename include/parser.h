@@ -5,7 +5,12 @@
 #include "types.h"
 #include <stdbool.h>
 
-typedef enum { PARSE_COMPLETE, PARSE_INCOMPLETE, PARSE_INVALID } parse_status;
+typedef enum {
+    PARSE_COMPLETE,
+    PARSE_INCOMPLETE,
+    PARSE_INVALID,
+    PARSE_NOMEM
+} parse_status;
 
 #define MAX_ARGS 32
 

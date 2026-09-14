@@ -3,6 +3,7 @@
 
 #include "buffer.h"
 #include "hashtable.h"
+#include "parser.h"
 #include "types.h"
 
 typedef struct {
@@ -15,7 +16,7 @@ typedef struct {
 
 void client_init(client* c, i32 fd);
 
-b8 client_process_input(client* c, ht* db);
+parse_status client_process_input(client* c, ht* db);
 
 int server_run(u16 port);
 

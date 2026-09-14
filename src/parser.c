@@ -88,7 +88,7 @@ b8 parse_bulk(buffer* b, parse_result* out, usize offset, usize* consumed) {
                 char* copy = malloc(s_len + 1);
 
                 if (copy == NULL) {
-                    out->status = PARSE_INVALID;
+                    out->status = PARSE_NOMEM;
                     return status;
                 }
 
