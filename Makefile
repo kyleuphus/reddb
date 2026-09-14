@@ -8,7 +8,10 @@ BIN = reddb
 $(BIN): $(SRC)
 	$(CC) $(CFLAGS) -o $(BIN) $(SRC)
 
+debug: CFLAGS += -DREDDB_DEBUG
+debug: $(BIN)
+
 clean: 
 	rm -f $(BIN)
 
-.PHONY: clean
+.PHONY: clean debug
