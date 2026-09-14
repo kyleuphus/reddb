@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <unistd.h>
 
 typedef int8_t i8;
 typedef int16_t i16;
@@ -16,6 +17,7 @@ typedef uint32_t u32;
 typedef uint64_t u64;
 
 typedef size_t usize;
+typedef ssize_t ssize;
 typedef ptrdiff_t isize;
 
 typedef bool b8;
