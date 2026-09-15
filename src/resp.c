@@ -19,12 +19,12 @@ void resp_write_error(buffer* out, const char* msg) {
 
 void resp_write_bulk(buffer* out, const char* s, usize len) {
 
-    buf_append(out, "$", strlen("$"));
-
     char header[32];
     i32 written = snprintf(header, sizeof(header), "%zu\r\n", len);
-    buf_append(out, header, (usize)written);
+    buf_reserve(out, 1 + written + len + 2);
 
+    buf_append(out, "$", strlen("$"));
+    buf_append(out, header, (usize)written);
     buf_append(out, s, len);
     buf_append(out, "\r\n", strlen("\r\n"));
 }

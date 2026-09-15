@@ -7,9 +7,25 @@ void buf_init(buffer* b) {
     b->data = NULL;
     b->len = 0;
     b->cap = 0;
+    b->oom = false;
 }
 
-void buf_append(buffer* b, const char* src, usize n) {
+b8 buf_append(buffer* b, const char* src, usize n) {
+
+    if (!buf_reserve(b, n)) {
+        return false;
+    }
+
+    memcpy(b->data + b->len, src, n);
+    b->len += n;
+    return true;
+}
+
+b8 buf_reserve(buffer* b, usize n) {
+
+    if (b->oom) {
+        return false;
+    }
 
     if (b->len + n > b->cap) {
 
@@ -23,15 +39,15 @@ void buf_append(buffer* b, const char* src, usize n) {
         char* new_data = realloc(b->data, new_cap);
 
         if (new_data == NULL) {
-            return;
+            b->oom = true;
+            return false;
         }
 
         b->data = new_data;
         b->cap = new_cap;
     }
 
-    memcpy(b->data + b->len, src, n);
-    b->len += n;
+    return true;
 }
 
 void buf_free(buffer* b) {
@@ -39,6 +55,7 @@ void buf_free(buffer* b) {
     b->data = NULL;
     b->len = 0;
     b->cap = 0;
+    b->oom = false;
 }
 
 b8 buf_consume(buffer* b, usize n) {
