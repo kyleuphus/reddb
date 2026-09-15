@@ -1,17 +1,19 @@
 CC = clang
-CFLAGS = -std=c17 -Wall -Wextra -Wpedantic \
-         -fsanitize=address,undefined -g -Iinclude
+COMMON_CFLAGS = -std=c17 -Wall -Wextra -Wpedantic -Iinclude
 SRC = src/main.c src/server.c src/buffer.c src/resp.c \
       src/parser.c src/command.c src/hashtable.c src/el_kqueue.c
 BIN = reddb
 
-$(BIN): $(SRC)
-	$(CC) $(CFLAGS) -o $(BIN) $(SRC)
+all: debug
 
-debug: CFLAGS += -DREDDB_DEBUG
-debug: $(BIN)
+debug: 
+	$(CC) $(COMMON_CFLAGS) -fsanitize=address,undefined -g \
+		-DREDDB_DEBUG -o $(BIN) $(SRC)
+
+release:
+	$(CC) $(COMMON_CFLAGS) -O2 -o $(BIN) $(SRC)
 
 clean: 
 	rm -f $(BIN)
 
-.PHONY: clean debug
+.PHONY: all debug release clean
