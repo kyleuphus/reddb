@@ -37,7 +37,35 @@ static b8 set_nonblocking(int fd) {
     return fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
 }
 
-static b8 read_client(client* c, ht* db) {
+static b8 flush_buf(el_loop* l, client* c) {
+
+    while (c->out_sent < c->out.len) {
+        ssize accepted =
+            send(c->fd, c->out.data + c->out_sent, c->out.len - c->out_sent, 0);
+        if (accepted > 0) {
+            c->out_sent += (usize)accepted;
+        } else if (accepted == -1) {
+            if (errno == EINTR) {
+                continue;
+            } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                el_update(l, c->fd, c->mask, c->mask | EL_WRITABLE);
+                c->mask = c->mask | EL_WRITABLE;
+                return true;
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+    c->out.len = 0;
+    c->out_sent = 0;
+    el_update(l, c->fd, c->mask, c->mask & ~EL_WRITABLE);
+    c->mask = c->mask & ~EL_WRITABLE;
+    return true;
+}
+
+static b8 read_client(el_loop* l, client* c, ht* db) {
 
     char scratch[1024 * 16];
     ssize n;
@@ -45,13 +73,19 @@ static b8 read_client(client* c, ht* db) {
     n = recv(c->fd, scratch, sizeof(scratch), 0);
 
     if (n > 0) {
-        buf_append(&c->in, scratch, (usize)n);
+        if (!buf_append(&c->in, scratch, (usize)n)) {
+            return false;
+        }
 
         parse_status status = client_process_input(c, db);
+        if (c->out.oom) {
+            return false;
+        }
 
         if (c->out.len > 0) {
-            send(c->fd, c->out.data, c->out.len, 0);
-            c->out.len = 0;
+            if (!flush_buf(l, c)) {
+                return false;
+            }
         }
 
         if (status == PARSE_NOMEM || status == PARSE_INVALID) {
@@ -209,20 +243,30 @@ int server_run(u16 port) {
 
                 client* c = clients[fired[i].fd];
 
-                if (!read_client(c, db)) {
-                    close_client(loop, c);
-                    c = NULL;
+                if (fired[i].mask & EL_READABLE && c->mask & EL_READABLE) {
+                    if (!read_client(loop, c, db)) {
+                        close_client(loop, c);
+                        c = NULL;
+                    }
                 }
 
                 if (c == NULL) {
                     continue;
+                }
+
+                if (fired[i].mask & EL_WRITABLE && c->mask & EL_WRITABLE) {
+                    if (!flush_buf(loop, c)) {
+                        close_client(loop, c);
+                    }
                 }
             }
         }
     }
 
     for (i32 i = 0; i < MAX_CLIENTS; i++) {
-        close_client(loop, clients[i]);
+        if (clients[i] != NULL) {
+            close_client(loop, clients[i]);
+        }
     }
     el_free(loop);
     close(listen_fd);
