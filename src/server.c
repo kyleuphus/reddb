@@ -59,11 +59,12 @@ static b8 flush_buf(el_loop* l, client* c) {
             return false;
         }
     }
+
     c->out.len = 0;
     c->out_sent = 0;
     el_update(l, c->fd, c->mask, c->mask & ~EL_WRITABLE);
     c->mask = c->mask & ~EL_WRITABLE;
-    return true;
+    return (!c->close_after_reply);
 }
 
 static b8 read_client(el_loop* l, client* c, ht* db) {
@@ -83,14 +84,16 @@ static b8 read_client(el_loop* l, client* c, ht* db) {
             return false;
         }
 
+        if (status == PARSE_NOMEM || status == PARSE_INVALID) {
+            c->close_after_reply = true;
+            el_update(l, c->fd, c->mask, c->mask & ~EL_READABLE);
+            c->mask = c->mask & ~EL_READABLE;
+        }
+
         if (c->out.len > 0) {
             if (!flush_buf(l, c)) {
                 return false;
             }
-        }
-
-        if (status == PARSE_NOMEM || status == PARSE_INVALID) {
-            return false;
         }
 
         return true;
@@ -155,6 +158,7 @@ void client_init(client* c, i32 fd) {
     buf_init(&c->in);
     buf_init(&c->out);
     c->out_sent = 0;
+    c->close_after_reply = false;
 }
 
 parse_status client_process_input(client* c, ht* db) {
@@ -222,9 +226,11 @@ int server_run(u16 port) {
     el_update(loop, listen_fd, EL_NONE, EL_READABLE);
     el_fired fired[EL_MAX_EVENTS];
 
+    i64 next_pass = mstime();
+
     for (;;) {
 
-        i32 n = el_poll(loop, fired, -1);
+        i32 n = el_poll(loop, fired, 100);
 
         if (n < 0) {
             perror("el_poll");
@@ -261,6 +267,11 @@ int server_run(u16 port) {
                     }
                 }
             }
+        }
+        i64 now = mstime();
+        if (now >= next_pass) {
+            ht_active_expire(db, 1000, now);
+            next_pass = now + 100;
         }
     }
 

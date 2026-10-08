@@ -22,4 +22,6 @@ b8 ht_read_expire_at(ht* t, const char* key, usize klen, i64* ttl, i64 now);
 
 usize ht_get_len(ht* t);
 
+void ht_active_expire(ht* t, usize buckets, i64 now);
+
 #endif

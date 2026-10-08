@@ -19,6 +19,7 @@ struct ht {
     usize capacity;
     usize length;
     node** buckets;
+    usize expire_cursor;
 };
 
 static u64 ht_hash(const char* key, usize klen) {
@@ -106,6 +107,7 @@ ht* ht_create(void) {
 
     t->capacity = INITIAL_CAPACITY;
     t->length = 0;
+    t->expire_cursor = 0;
 
     t->buckets = malloc(t->capacity * sizeof(*t->buckets));
 
@@ -354,3 +356,19 @@ b8 ht_read_expire_at(ht* t, const char* key, usize klen, i64* ttl, i64 now) {
 }
 
 usize ht_get_len(ht* t) { return t->length; }
+
+void ht_active_expire(ht* t, usize buckets, i64 now) {
+    for (usize i = 0; i < buckets; i++) {
+        usize index = t->expire_cursor;
+
+        node* n = t->buckets[index];
+        while (n != NULL) {
+            node* next = n->next;
+            if (n->expire_at != 0 && n->expire_at <= now) {
+                ht_delete_node(t, n->key, n->klen);
+            }
+            n = next;
+        }
+        t->expire_cursor = (index + 1) % t->capacity;
+    }
+}

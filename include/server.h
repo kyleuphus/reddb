@@ -12,6 +12,7 @@ typedef struct {
     buffer in;      // bytes read, not yet parsed
     buffer out;     // replies encoded, not yet sent
     usize out_sent; // how much of out is already sent
+    b8 close_after_reply;
 } client;
 
 void client_init(client* c, i32 fd);
