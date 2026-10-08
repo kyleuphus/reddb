@@ -9,6 +9,30 @@
 #include <string.h>
 #include <strings.h>
 
+static b8 extract_int(const char* value, usize len, i64* out) {
+
+    char tmp[32];
+    if (len >= sizeof(tmp)) {
+        return false;
+    }
+    memcpy(tmp, value, len);
+    tmp[len] = '\0';
+
+    char* endptr;
+    errno = 0;
+
+    *out = strtoll(tmp, &endptr, 10);
+    usize i = (tmp[0] == '-') ? 1 : 0;
+    b8 leading_ok = (tmp[i] >= '1' && tmp[i] <= '9');
+    b8 is_zero = (len == 1 && tmp[0] == '0');
+
+    if (endptr != tmp + len || errno == ERANGE || !(leading_ok || is_zero)) {
+        return false;
+    } else {
+        return true;
+    }
+}
+
 void command_dispatch(char** argv, usize* arglen, i32 argc, buffer* out, ht* db,
                       i64 now) {
 
@@ -41,32 +65,17 @@ void command_dispatch(char** argv, usize* arglen, i32 argc, buffer* out, ht* db,
             }
         } else if (argc == 5) {
             if (strcasecmp(argv[3], "EX") == 0) {
-                char tmp[32];
                 if (arglen[4] < 32) {
-                    memcpy(tmp, argv[4], arglen[4]);
-                    tmp[arglen[4]] = '\0';
-
-                    char* endptr;
-                    errno = 0;
-                    i64 ttl = strtoll(tmp, &endptr, 10);
-
-                    usize i = (tmp[0] == '-') ? 1 : 0;
-                    b8 leading_ok = (tmp[i] >= '1' && tmp[i] <= '9');
-                    b8 is_zero = (arglen[4] == 1 && tmp[0] == '0');
-
-                    if (errno == ERANGE || endptr != tmp + arglen[4] ||
-                        !(leading_ok || is_zero)) {
+                    i64 ttl;
+                    if (!extract_int(argv[4], arglen[4], &ttl)) {
                         resp_write_error(
                             out, "ERR value is not an integer or out of range");
-                    } else if (tmp[0] == '-') {
+                    } else if (ttl <= 0 || ttl > (INT64_MAX - now) / 1000) {
                         resp_write_error(
                             out, "ERR invalid expire time in \'set\' command");
                     } else {
-                        if (ttl > (INT64_MAX - now) / 1000 || ttl <= 0) {
-                            resp_write_error(out, "ERR invalid expire time "
-                                                  "in \'set\' command");
-                        } else if (ht_set(db, argv[1], arglen[1], argv[2],
-                                          arglen[2], now + ttl * 1000)) {
+                        if (ht_set(db, argv[1], arglen[1], argv[2], arglen[2],
+                                   now + ttl * 1000)) {
                             resp_write_simple(out, "OK");
                         } else {
                             resp_write_error(out, "ERR out of memory");
@@ -74,7 +83,7 @@ void command_dispatch(char** argv, usize* arglen, i32 argc, buffer* out, ht* db,
                     }
                 } else {
                     resp_write_error(
-                        out, "ERR invalid expire time in \'set\' command");
+                        out, "ERR value is not an integer or out of range");
                 }
             } else {
                 resp_write_error(out, "ERR syntax error");
@@ -121,12 +130,10 @@ void command_dispatch(char** argv, usize* arglen, i32 argc, buffer* out, ht* db,
             resp_write_error(
                 out, "ERR wrong number of arguments for 'exists' command");
         }
-
     } else if (strcasecmp(argv[0], "INCR") == 0) {
         usize outlen;
         if (argc == 2) {
             const char* value = ht_get(db, argv[1], arglen[1], &outlen, now);
-            char tmp[32];
 
             if (value == NULL) {
                 if (ht_set(db, argv[1], arglen[1], "1", 1, 0)) {
@@ -134,30 +141,12 @@ void command_dispatch(char** argv, usize* arglen, i32 argc, buffer* out, ht* db,
                 } else {
                     resp_write_error(out, "ERR out of memory");
                 }
-            } else if (outlen >= sizeof(tmp)) {
-                resp_write_error(out,
-                                 "ERR value is not an integer or out of range");
             } else {
-
-                memcpy(tmp, value, outlen);
-                tmp[outlen] = '\0';
-
-                char* endptr;
-                errno = 0;
-
-                i64 ivalue = strtoll(tmp, &endptr, 10);
-                usize i = (tmp[0] == '-') ? 1 : 0;
-                b8 leading_ok = (tmp[i] >= '1' && tmp[i] <= '9');
-                b8 is_zero = (outlen == 1 && tmp[0] == '0');
-
-                if (endptr == tmp || endptr != tmp + outlen ||
-                    errno == ERANGE) {
+                i64 ivalue;
+                if (!extract_int(value, outlen, &ivalue)) {
                     resp_write_error(
                         out, "ERR value is not an integer or out of range");
                 } else if (ivalue >= LLONG_MAX) {
-                    resp_write_error(
-                        out, "ERR value is not an integer or out of range");
-                } else if (outlen <= i || !(leading_ok || is_zero)) {
                     resp_write_error(
                         out, "ERR value is not an integer or out of range");
                 } else {
@@ -175,6 +164,51 @@ void command_dispatch(char** argv, usize* arglen, i32 argc, buffer* out, ht* db,
         } else {
             resp_write_error(
                 out, "ERR wrong number of arguments for 'incr' command");
+        }
+    } else if (strcasecmp(argv[0], "EXPIRE") == 0) {
+        if (argc != 3) {
+            resp_write_error(
+                out, "ERR wrong number of arguments for 'expire' command");
+        } else {
+            i64 ttl;
+            if (!extract_int(argv[2], arglen[2], &ttl)) {
+                resp_write_error(out,
+                                 "ERR value is not an integer or out of range");
+            } else if (ttl <= 0) {
+                if (ht_delete(db, argv[1], arglen[1], now)) {
+                    resp_write_integer(out, 1);
+                } else {
+                    resp_write_integer(out, 0);
+                }
+            } else if (ttl > (INT64_MAX - now) / 1000) {
+                resp_write_error(out,
+                                 "ERR invalid expire time in 'expire' command");
+            } else {
+                if (!ht_set_expire_at(db, argv[1], arglen[1], ttl, now)) {
+                    resp_write_integer(out, 0);
+                } else {
+                    resp_write_integer(out, 1);
+                }
+            }
+        }
+    } else if (strcasecmp(argv[0], "TTL") == 0) {
+        if (argc != 2) {
+            resp_write_error(out,
+                             "ERR wrong number of arguments for 'ttl' command");
+        } else {
+            i64 ttl;
+            if (!ht_read_expire_at(db, argv[1], arglen[1], &ttl, now)) {
+                resp_write_integer(out, -2);
+            } else {
+                resp_write_integer(out, ttl);
+            }
+        }
+    } else if (strcasecmp(argv[0], "DBSIZE") == 0) {
+        if (argc != 1) {
+            resp_write_error(
+                out, "ERR wrong number of arguments for 'dbsize' command");
+        } else {
+            resp_write_integer(out, ht_get_len(db));
         }
     } else {
         resp_write_error(out, "ERR unknown command");
