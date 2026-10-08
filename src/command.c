@@ -9,8 +9,8 @@
 #include <string.h>
 #include <strings.h>
 
-void command_dispatch(char** argv, usize* arglen, i32 argc, buffer* out,
-                      ht* db) {
+void command_dispatch(char** argv, usize* arglen, i32 argc, buffer* out, ht* db,
+                      i64 now) {
 
     if (argc == 0) {
         return;
@@ -34,19 +34,61 @@ void command_dispatch(char** argv, usize* arglen, i32 argc, buffer* out,
         }
     } else if (strcasecmp(argv[0], "SET") == 0) {
         if (argc == 3) {
-            if (ht_set(db, argv[1], arglen[1], argv[2], arglen[2])) {
+            if (ht_set(db, argv[1], arglen[1], argv[2], arglen[2], 0)) {
                 resp_write_simple(out, "OK");
             } else {
                 resp_write_error(out, "ERR out of memory");
             }
+        } else if (argc == 5) {
+            if (strcasecmp(argv[3], "EX") == 0) {
+                char tmp[32];
+                if (arglen[4] < 32) {
+                    memcpy(tmp, argv[4], arglen[4]);
+                    tmp[arglen[4]] = '\0';
+
+                    char* endptr;
+                    errno = 0;
+                    i64 ttl = strtoll(tmp, &endptr, 10);
+
+                    usize i = (tmp[0] == '-') ? 1 : 0;
+                    b8 leading_ok = (tmp[i] >= '1' && tmp[i] <= '9');
+                    b8 is_zero = (arglen[4] == 1 && tmp[0] == '0');
+
+                    if (errno == ERANGE || endptr != tmp + arglen[4] ||
+                        !(leading_ok || is_zero)) {
+                        resp_write_error(
+                            out, "ERR value is not an integer or out of range");
+                    } else if (tmp[0] == '-') {
+                        resp_write_error(
+                            out, "ERR invalid expire time in \'set\' command");
+                    } else {
+                        if (ttl > (INT64_MAX - now) / 1000 || ttl <= 0) {
+                            resp_write_error(out, "ERR invalid expire time "
+                                                  "in \'set\' command");
+                        } else if (ht_set(db, argv[1], arglen[1], argv[2],
+                                          arglen[2], now + ttl * 1000)) {
+                            resp_write_simple(out, "OK");
+                        } else {
+                            resp_write_error(out, "ERR out of memory");
+                        }
+                    }
+                } else {
+                    resp_write_error(
+                        out, "ERR invalid expire time in \'set\' command");
+                }
+            } else {
+                resp_write_error(out, "ERR syntax error");
+            }
+        } else if (argc < 3) {
+            resp_write_error(
+                out, "ERR wrong number of arguments for \'set\' command");
         } else {
-            resp_write_error(out,
-                             "ERR wrong number of arguments for 'set' command");
+            resp_write_error(out, "ERR syntax error");
         }
     } else if (strcasecmp(argv[0], "GET") == 0) {
         usize outlen;
         if (argc == 2) {
-            const char* value = ht_get(db, argv[1], arglen[1], &outlen);
+            const char* value = ht_get(db, argv[1], arglen[1], &outlen, now);
             if (value != NULL) {
                 resp_write_bulk(out, value, outlen);
             } else {
@@ -58,7 +100,7 @@ void command_dispatch(char** argv, usize* arglen, i32 argc, buffer* out,
         }
     } else if (strcasecmp(argv[0], "DEL") == 0) {
         if (argc == 2) {
-            if (ht_delete(db, argv[1], arglen[1])) {
+            if (ht_delete(db, argv[1], arglen[1], now)) {
                 resp_write_integer(out, 1);
             } else {
                 resp_write_integer(out, 0);
@@ -70,7 +112,7 @@ void command_dispatch(char** argv, usize* arglen, i32 argc, buffer* out,
     } else if (strcasecmp(argv[0], "EXISTS") == 0) {
         usize outlen;
         if (argc == 2) {
-            if (ht_get(db, argv[1], arglen[1], &outlen) != NULL) {
+            if (ht_get(db, argv[1], arglen[1], &outlen, now) != NULL) {
                 resp_write_integer(out, 1);
             } else {
                 resp_write_integer(out, 0);
@@ -83,11 +125,11 @@ void command_dispatch(char** argv, usize* arglen, i32 argc, buffer* out,
     } else if (strcasecmp(argv[0], "INCR") == 0) {
         usize outlen;
         if (argc == 2) {
-            const char* value = ht_get(db, argv[1], arglen[1], &outlen);
+            const char* value = ht_get(db, argv[1], arglen[1], &outlen, now);
             char tmp[32];
 
             if (value == NULL) {
-                if (ht_set(db, argv[1], arglen[1], "1", 1)) {
+                if (ht_set(db, argv[1], arglen[1], "1", 1, 0)) {
                     resp_write_integer(out, 1);
                 } else {
                     resp_write_error(out, "ERR out of memory");
@@ -122,8 +164,8 @@ void command_dispatch(char** argv, usize* arglen, i32 argc, buffer* out,
                     ivalue++;
                     char int_str[32];
                     snprintf(int_str, sizeof(int_str), "%" PRId64, ivalue);
-                    if (ht_set(db, argv[1], arglen[1], int_str,
-                               strlen(int_str))) {
+                    if (ht_set(db, argv[1], arglen[1], int_str, strlen(int_str),
+                               -1)) {
                         resp_write_integer(out, ivalue);
                     } else {
                         resp_write_error(out, "ERR out of memory");

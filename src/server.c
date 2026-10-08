@@ -4,6 +4,7 @@
 #include "debug.h"
 #include "el.h"
 #include "hashtable.h"
+#include "mstime.h"
 #include "resp.h"
 
 #include <arpa/inet.h>
@@ -174,7 +175,7 @@ parse_status client_process_input(client* c, ht* db) {
             status = PARSE_NOMEM;
             break;
         } else {
-            command_dispatch(r.argv, r.arglen, r.argc, &c->out, db);
+            command_dispatch(r.argv, r.arglen, r.argc, &c->out, db, mstime());
             buf_consume(&c->in, r.bytes_consumed);
         }
         parse_result_free(&r);

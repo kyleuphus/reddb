@@ -11,6 +11,7 @@ typedef struct node {
     usize klen;
     char* value;
     usize vlen;
+    i64 expire_at;
     struct node* next;
 } node;
 
@@ -31,6 +32,68 @@ static u64 ht_hash(const char* key, usize klen) {
     }
 
     return hash;
+}
+
+static b8 ht_delete_node(ht* t, const char* key, usize klen) {
+
+    u64 hash = ht_hash(key, klen);
+    usize index = (usize)(hash & (u64)(t->capacity - 1));
+
+    if (t->buckets[index] == NULL) {
+        return false;
+    }
+
+    node* n = t->buckets[index];
+    node* previous;
+    i32 count = 0;
+
+    for (;;) {
+        if (n->klen == klen && memcmp(key, n->key, klen) == 0) {
+            if (count != 0) {
+                previous->next = n->next;
+            } else if (count == 0) {
+                t->buckets[index] = n->next;
+            }
+            free(n->key);
+            free(n->value);
+            free(n);
+            t->length--;
+            return true;
+        } else if (n->next == NULL) {
+            return false;
+        } else {
+            previous = n;
+            n = n->next;
+            count++;
+        }
+    }
+}
+
+static node* ht_find_node(ht* t, const char* key, usize klen, i64 now) {
+
+    u64 hash = ht_hash(key, klen);
+    usize index = (usize)(hash & (u64)(t->capacity - 1));
+
+    if (t->buckets[index] == NULL) {
+        return NULL;
+    }
+
+    node* n = t->buckets[index];
+    for (;;) {
+        if (n->klen == klen && memcmp(key, n->key, klen) == 0) {
+            b8 dead = n->expire_at != 0 && n->expire_at <= now;
+            if (!dead) {
+                return n;
+            } else {
+                ht_delete_node(t, key, klen);
+                return NULL;
+            }
+        } else if (n->next == NULL) {
+            return NULL;
+        } else {
+            n = n->next;
+        }
+    }
 }
 
 ht* ht_create(void) {
@@ -83,7 +146,7 @@ void ht_free(ht* t) {
 
 static b8 ht_bucket_insert(node** buckets, usize cap, const char* key,
                            usize klen, const char* value, usize vlen,
-                           b8* inserted) {
+                           i64 expire_at, b8* inserted) {
 
     u64 hash = ht_hash(key, klen);
     usize index = (usize)(hash & (u64)(cap - 1));
@@ -123,6 +186,7 @@ static b8 ht_bucket_insert(node** buckets, usize cap, const char* key,
             new->value = value_copy;
             new->vlen = vlen;
             new->next = buckets[index];
+            new->expire_at = expire_at;
 
             buckets[index] = new;
 
@@ -145,6 +209,7 @@ static b8 ht_bucket_insert(node** buckets, usize cap, const char* key,
 
             n->value = value_copy;
             n->vlen = vlen;
+            n->expire_at = expire_at;
 
             *inserted = false;
 
@@ -188,32 +253,21 @@ static b8 ht_grow(ht* t) {
     return true;
 }
 
-const char* ht_get(ht* t, const char* key, usize klen, usize* outlen) {
+const char* ht_get(ht* t, const char* key, usize klen, usize* outlen, i64 now) {
 
-    u64 hash = ht_hash(key, klen);
-    usize index = (usize)(hash & (u64)(t->capacity - 1));
+    node* n = ht_find_node(t, key, klen, now);
 
-    if (t->buckets[index] == NULL) {
+    if (n == NULL) {
         *outlen = 0;
         return NULL;
-    }
-
-    node* n = t->buckets[index];
-
-    for (;;) {
-        if (n->klen == klen && memcmp(key, n->key, klen) == 0) {
-            *outlen = n->vlen;
-            return n->value;
-        } else if (n->next == NULL) {
-            *outlen = 0;
-            return NULL;
-        } else {
-            n = n->next;
-        }
+    } else {
+        *outlen = n->vlen;
+        return n->value;
     }
 }
 
-b8 ht_set(ht* t, const char* key, usize klen, const char* value, usize vlen) {
+b8 ht_set(ht* t, const char* key, usize klen, const char* value, usize vlen,
+          i64 expire_at) {
 
     if (value == NULL) {
         return false;
@@ -227,9 +281,29 @@ b8 ht_set(ht* t, const char* key, usize klen, const char* value, usize vlen) {
 
     b8 inserted;
 
-    if (!ht_bucket_insert(t->buckets, t->capacity, key, klen, value, vlen,
-                          &inserted)) {
-        return false;
+    if (expire_at == -1) { // -1 requires the key to exist
+        u64 hash = ht_hash(key, klen);
+        usize index = (usize)(hash & (u64)(t->capacity - 1));
+        node* n = t->buckets[index];
+        b8 found = false;
+
+        while (!found) {
+            if (n->klen == klen && memcmp(key, n->key, klen) == 0) {
+                expire_at = n->expire_at;
+                found = true;
+            } else {
+                n = n->next;
+            }
+        }
+        if (!ht_bucket_insert(t->buckets, t->capacity, key, klen, value, vlen,
+                              expire_at, &inserted)) {
+            return false;
+        }
+    } else {
+        if (!ht_bucket_insert(t->buckets, t->capacity, key, klen, value, vlen,
+                              expire_at, &inserted)) {
+            return false;
+        }
     }
 
     if (inserted) {
@@ -239,37 +313,44 @@ b8 ht_set(ht* t, const char* key, usize klen, const char* value, usize vlen) {
     return true;
 }
 
-b8 ht_delete(ht* t, const char* key, usize klen) {
+b8 ht_delete(ht* t, const char* key, usize klen, i64 now) {
 
-    u64 hash = ht_hash(key, klen);
-    usize index = (usize)(hash & (u64)(t->capacity - 1));
+    node* n = ht_find_node(t, key, klen, now);
 
-    if (t->buckets[index] == NULL) {
+    if (n == NULL) {
         return false;
-    }
-
-    node* n = t->buckets[index];
-    node* previous;
-    i32 count = 0;
-
-    for (;;) {
-        if (n->klen == klen && memcmp(key, n->key, klen) == 0) {
-            if (count != 0) {
-                previous->next = n->next;
-            } else if (count == 0) {
-                t->buckets[index] = n->next;
-            }
-            free(n->key);
-            free(n->value);
-            free(n);
-            t->length--;
-            return true;
-        } else if (n->next == NULL) {
-            return false;
-        } else {
-            previous = n;
-            n = n->next;
-            count++;
-        }
+    } else {
+        return ht_delete_node(t, key, klen);
     }
 }
+
+b8 ht_set_expire_at(ht* t, const char* key, usize klen, i64 ttl, i64 now) {
+
+    node* n = ht_find_node(t, key, klen, now);
+
+    if (n == NULL) {
+        return false;
+    } else {
+        n->expire_at = now + ttl * 1000;
+        return true;
+    }
+}
+
+b8 ht_read_expire_at(ht* t, const char* key, usize klen, i64* ttl, i64 now) {
+
+    node* n = ht_find_node(t, key, klen, now);
+
+    if (n == NULL) {
+        *ttl = -2;
+        return false;
+    } else {
+        if (n->expire_at == 0) {
+            *ttl = -1;
+        } else {
+            *ttl = (n->expire_at - now + 500) / 1000;
+        }
+        return true;
+    }
+}
+
+usize ht_get_len(ht* t) { return t->length; }

@@ -4,6 +4,6 @@
 #include "hashtable.h"
 #include "types.h"
 
-void command_dispatch(char** argv, usize* arglen, i32 argc, buffer* out,
-                      ht* t);
+void command_dispatch(char** argv, usize* arglen, i32 argc, buffer* out, ht* t,
+                      i64 now);
 #endif
