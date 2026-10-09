@@ -17,7 +17,7 @@ typedef struct {
 
 void client_init(client* c, i32 fd);
 
-parse_status client_process_input(client* c, ht* db);
+parse_status client_process_input(client* c, ht* db, buffer* aof_buf);
 
 int server_run(u16 port);
 

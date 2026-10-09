@@ -1,4 +1,5 @@
 #include "command.h"
+#include "aof.h"
 #include "resp.h"
 
 #include <errno.h>
@@ -34,7 +35,7 @@ static b8 extract_int(const char* value, usize len, i64* out) {
 }
 
 void command_dispatch(char** argv, usize* arglen, i32 argc, buffer* out, ht* db,
-                      i64 now) {
+                      i64 now, buffer* aof_buf) {
 
     if (argc == 0) {
         return;
@@ -59,6 +60,10 @@ void command_dispatch(char** argv, usize* arglen, i32 argc, buffer* out, ht* db,
     } else if (strcasecmp(argv[0], "SET") == 0) {
         if (argc == 3) {
             if (ht_set(db, argv[1], arglen[1], argv[2], arglen[2], 0)) {
+                if (aof_buf != NULL) {
+                    aof_append_command(aof_buf, (const char**)argv, arglen,
+                                       argc);
+                }
                 resp_write_simple(out, "OK");
             } else {
                 resp_write_error(out, "ERR out of memory");
@@ -76,6 +81,19 @@ void command_dispatch(char** argv, usize* arglen, i32 argc, buffer* out, ht* db,
                     } else {
                         if (ht_set(db, argv[1], arglen[1], argv[2], arglen[2],
                                    now + ttl * 1000)) {
+                            if (aof_buf != NULL) {
+                                i64 value = now + ttl * 1000;
+                                char int_str[32];
+                                snprintf(int_str, sizeof(int_str), "%" PRId64,
+                                         value);
+                                const char* set_argv[] = {
+                                    argv[0], argv[1], argv[2], "PXAT", int_str};
+                                usize set_len[] = {arglen[0], arglen[1],
+                                                   arglen[2], 4,
+                                                   strlen(int_str)};
+                                aof_append_command(aof_buf, set_argv, set_len,
+                                                   argc);
+                            }
                             resp_write_simple(out, "OK");
                         } else {
                             resp_write_error(out, "ERR out of memory");
@@ -84,6 +102,26 @@ void command_dispatch(char** argv, usize* arglen, i32 argc, buffer* out, ht* db,
                 } else {
                     resp_write_error(
                         out, "ERR value is not an integer or out of range");
+                }
+            } else if (strcasecmp(argv[3], "PXAT") == 0) {
+                i64 expire_at;
+                if (!extract_int(argv[4], arglen[4], &expire_at)) {
+                    resp_write_error(
+                        out, "ERR value is not an integer or out of range");
+                } else if (expire_at > 0) {
+                    if (!ht_set(db, argv[1], arglen[1], argv[2], arglen[2],
+                                expire_at)) {
+                        resp_write_error(out, "ERR out of memory");
+                    } else {
+                        if (aof_buf != NULL) {
+                            aof_append_command(aof_buf, (const char**)argv,
+                                               arglen, argc);
+                        }
+                        resp_write_simple(out, "OK");
+                    }
+                } else {
+                    resp_write_error(
+                        out, "ERR invalid expire time in \'set\' command");
                 }
             } else {
                 resp_write_error(out, "ERR syntax error");
@@ -110,6 +148,10 @@ void command_dispatch(char** argv, usize* arglen, i32 argc, buffer* out, ht* db,
     } else if (strcasecmp(argv[0], "DEL") == 0) {
         if (argc == 2) {
             if (ht_delete(db, argv[1], arglen[1], now)) {
+                if (aof_buf != NULL) {
+                    aof_append_command(aof_buf, (const char**)argv, arglen,
+                                       argc);
+                }
                 resp_write_integer(out, 1);
             } else {
                 resp_write_integer(out, 0);
@@ -137,6 +179,10 @@ void command_dispatch(char** argv, usize* arglen, i32 argc, buffer* out, ht* db,
 
             if (value == NULL) {
                 if (ht_set(db, argv[1], arglen[1], "1", 1, 0)) {
+                    if (aof_buf != NULL) {
+                        aof_append_command(aof_buf, (const char**)argv, arglen,
+                                           argc);
+                    }
                     resp_write_integer(out, 1);
                 } else {
                     resp_write_error(out, "ERR out of memory");
@@ -155,6 +201,10 @@ void command_dispatch(char** argv, usize* arglen, i32 argc, buffer* out, ht* db,
                     snprintf(int_str, sizeof(int_str), "%" PRId64, ivalue);
                     if (ht_set(db, argv[1], arglen[1], int_str, strlen(int_str),
                                -1)) {
+                        if (aof_buf != NULL) {
+                            aof_append_command(aof_buf, (const char**)argv,
+                                               arglen, argc);
+                        }
                         resp_write_integer(out, ivalue);
                     } else {
                         resp_write_error(out, "ERR out of memory");
@@ -176,6 +226,11 @@ void command_dispatch(char** argv, usize* arglen, i32 argc, buffer* out, ht* db,
                                  "ERR value is not an integer or out of range");
             } else if (ttl <= 0) {
                 if (ht_delete(db, argv[1], arglen[1], now)) {
+                    if (aof_buf != NULL) {
+                        const char* expire_argv[] = {"DEL", argv[1]};
+                        usize expire_len[] = {3, arglen[1]};
+                        aof_append_command(aof_buf, expire_argv, expire_len, 2);
+                    }
                     resp_write_integer(out, 1);
                 } else {
                     resp_write_integer(out, 0);
@@ -187,6 +242,50 @@ void command_dispatch(char** argv, usize* arglen, i32 argc, buffer* out, ht* db,
                 if (!ht_set_expire_at(db, argv[1], arglen[1], ttl, now)) {
                     resp_write_integer(out, 0);
                 } else {
+                    if (aof_buf != NULL) {
+                        i64 value = now + ttl * 1000;
+                        char int_str[32];
+                        snprintf(int_str, sizeof(int_str), "%" PRId64, value);
+                        const char* expire_argv[] = {"PEXPIREAT", argv[1],
+                                                     int_str};
+                        usize expire_len[] = {9, arglen[1], strlen(int_str)};
+                        aof_append_command(aof_buf, expire_argv, expire_len,
+                                           argc);
+                    }
+                    resp_write_integer(out, 1);
+                }
+            }
+        }
+    } else if (strcasecmp(argv[0], "PEXPIREAT") == 0) {
+        if (argc != 3) {
+            resp_write_error(
+                out, "ERR wrong number of arguments for 'pexpireat' command");
+        } else {
+            i64 expire_at;
+            if (!extract_int(argv[2], arglen[2], &expire_at)) {
+                resp_write_error(out,
+                                 "ERR value is not an integer or out of range");
+            } else {
+                if (expire_at <= 0) {
+                    if (ht_delete(db, argv[1], arglen[1], now)) {
+                        if (aof_buf != NULL) {
+                            const char* expire_argv[] = {"DEL", argv[1]};
+                            usize expire_len[] = {3, arglen[1]};
+                            aof_append_command(aof_buf, expire_argv, expire_len,
+                                               2);
+                        }
+                        resp_write_integer(out, 1);
+                    } else {
+                        resp_write_integer(out, 0);
+                    }
+                } else if (!ht_set_expire_absolute(db, argv[1], arglen[1],
+                                                   expire_at, now)) {
+                    resp_write_integer(out, 0);
+                } else {
+                    if (aof_buf != NULL) {
+                        aof_append_command(aof_buf, (const char**)argv, arglen,
+                                           argc);
+                    }
                     resp_write_integer(out, 1);
                 }
             }

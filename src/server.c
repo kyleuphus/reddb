@@ -1,4 +1,5 @@
 #include "server.h"
+#include "aof.h"
 #include "buffer.h"
 #include "command.h"
 #include "debug.h"
@@ -67,7 +68,8 @@ static b8 flush_buf(el_loop* l, client* c) {
     return (!c->close_after_reply);
 }
 
-static b8 read_client(el_loop* l, client* c, ht* db) {
+static b8 read_client(el_loop* l, client* c, ht* db, buffer* aof_buf,
+                      i32 log_fd) {
 
     char scratch[1024 * 16];
     ssize n;
@@ -79,7 +81,7 @@ static b8 read_client(el_loop* l, client* c, ht* db) {
             return false;
         }
 
-        parse_status status = client_process_input(c, db);
+        parse_status status = client_process_input(c, db, aof_buf);
         if (c->out.oom) {
             return false;
         }
@@ -91,11 +93,17 @@ static b8 read_client(el_loop* l, client* c, ht* db) {
         }
 
         if (c->out.len > 0) {
+            if (aof_buf->oom ||
+                !aof_write_all(log_fd, aof_buf->data, aof_buf->len)) {
+                perror("aof write");
+                exit(1);
+            }
             if (!flush_buf(l, c)) {
                 return false;
             }
         }
 
+        aof_buf->len = 0;
         return true;
     } else if (n == 0) {
         return false;
@@ -161,7 +169,8 @@ void client_init(client* c, i32 fd) {
     c->close_after_reply = false;
 }
 
-parse_status client_process_input(client* c, ht* db) {
+parse_status client_process_input(client* c, ht* db, buffer* aof_buf) {
+
     parse_status status = PARSE_INCOMPLETE;
     for (;;) {
         parse_result r = parse_command(&c->in);
@@ -179,7 +188,8 @@ parse_status client_process_input(client* c, ht* db) {
             status = PARSE_NOMEM;
             break;
         } else {
-            command_dispatch(r.argv, r.arglen, r.argc, &c->out, db, mstime());
+            command_dispatch(r.argv, r.arglen, r.argc, &c->out, db, mstime(),
+                             aof_buf);
             buf_consume(&c->in, r.bytes_consumed);
         }
         parse_result_free(&r);
@@ -188,6 +198,21 @@ parse_status client_process_input(client* c, ht* db) {
 }
 
 int server_run(u16 port) {
+
+    ht* db = ht_create();
+
+    if (!aof_load("appendonly.aof", db)) {
+        ht_free(db);
+        return 1;
+    }
+
+    i32 log_fd = aof_open("appendonly.aof");
+    if (log_fd < 0) {
+        perror("log");
+        ht_free(db);
+        return 1;
+    }
+
     signal(SIGPIPE, SIG_IGN);
     int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_fd < 0) {
@@ -217,7 +242,6 @@ int server_run(u16 port) {
 
     set_nonblocking(listen_fd);
 
-    ht* db = ht_create();
     el_loop* loop = el_create();
     if (loop == NULL) {
         perror("loop");
@@ -227,7 +251,10 @@ int server_run(u16 port) {
     el_fired fired[EL_MAX_EVENTS];
 
     i64 next_pass = mstime();
+    i64 next_fsync = mstime() + 1000;
 
+    buffer aof_buf;
+    buf_init(&aof_buf);
     for (;;) {
 
         i32 n = el_poll(loop, fired, 100);
@@ -251,7 +278,7 @@ int server_run(u16 port) {
                 client* c = clients[fired[i].fd];
 
                 if (fired[i].mask & EL_READABLE && c->mask & EL_READABLE) {
-                    if (!read_client(loop, c, db)) {
+                    if (!read_client(loop, c, db, &aof_buf, log_fd)) {
                         close_client(loop, c);
                         c = NULL;
                     }
@@ -272,6 +299,13 @@ int server_run(u16 port) {
         if (now >= next_pass) {
             ht_active_expire(db, 1000, now);
             next_pass = now + 100;
+        }
+        if (now >= next_fsync) {
+            if (!aof_fsync(log_fd)) {
+                perror("fsync");
+                return 1;
+            }
+            next_fsync = now + 1000;
         }
     }
 
