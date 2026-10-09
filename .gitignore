@@ -2,3 +2,4 @@
 reddb
 *.dSYM/
 scratch
+*.aof
