@@ -18,6 +18,9 @@ b8 ht_delete(ht* t, const char* key, usize klen, i64 now);
 
 b8 ht_set_expire_at(ht* t, const char* key, usize klen, i64 ttl, i64 now);
 
+b8 ht_set_expire_absolute(ht* t, const char* key, usize klen, i64 expire_at,
+                          i64 now);
+
 b8 ht_read_expire_at(ht* t, const char* key, usize klen, i64* ttl, i64 now);
 
 usize ht_get_len(ht* t);

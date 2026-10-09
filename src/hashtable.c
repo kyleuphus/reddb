@@ -338,6 +338,18 @@ b8 ht_set_expire_at(ht* t, const char* key, usize klen, i64 ttl, i64 now) {
     }
 }
 
+b8 ht_set_expire_absolute(ht* t, const char* key, usize klen, i64 expire_at,
+                          i64 now) {
+    node* n = ht_find_node(t, key, klen, now);
+
+    if (n == NULL) {
+        return false;
+    } else {
+        n->expire_at = expire_at;
+        return true;
+    }
+}
+
 b8 ht_read_expire_at(ht* t, const char* key, usize klen, i64* ttl, i64 now) {
 
     node* n = ht_find_node(t, key, klen, now);
