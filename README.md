@@ -1,7 +1,8 @@
 # reddb
 
 A Redis-compatible in-memory key-value database written from scratch in C. Communicates 
-by RESP2 over TCP, and serves many clients concurrently from a single thread.
+by RESP2 over TCP, serves many clients concurrently from a single thread, and persists
+every write to an append-only log that is replayed on startup.
 
 ## Build and run:
 
@@ -11,6 +12,9 @@ make          # sanitizers + debug logging - the default target
 
 make release  # -O2, no sanitizers - for benchmarking
 ```
+
+The server keeps its log in `appendonly.aof` in the directory it was started
+from, creating it on the first run. Delete that file to start with an empty database.
 
 Requires clang or gcc with C17. Both builds compile with `-Wall -Wextra
 -Wpedantic`; the default adds AddressSanitizer and UndefinedBehaviorSanitizer.
@@ -22,6 +26,15 @@ and BSD. Linux needs an epoll backend behind `el.h`, which is what that
 interface exists for.
 
 ## Tests:
+
+`tests/aof_restart.sh` checks persistence. It runs the server in a temporary directory
+on port 6381, kills it with `kill -9` (no chance to clean up), then restarts it and 
+checks what came back: plain values, TTLs that expired while the server was down, a failed
+command that must not have been logged, a half-written last record, and a corrupted log.
+
+```
+make && ./tests/aof_restart.sh     # prints ALL PASSED
+```
 
 `tests/ttl_vs_redis.sh` sends the same sequence of TTL commands to two servers and prints every reply, so a real Redis can serve as the reference:
 
@@ -98,12 +111,14 @@ $ redis-cli -p 6380 GET big | wc -c
 | `ECHO <msg>` | the message, as a bulk string |
 | `SET <key> <value>` | `+OK`, clears any ttl the key had |
 | `SET <key> <value> EX <seconds>` | `+OK`, the key expires after `<seconds>` |
+| `SET <key> <value> PXAT <ms>` | `+OK`, the key expires at the absolute Unix time `<ms>` |
 | `GET <key>` | the value, or the null bulk string if absent |
 | `DEL <key>` | `1` if the key existed, `0` if not |
 | `EXISTS <key>` | `1` or `0` |
 | `INCR <key>` | the new value as an integer, keeps any ttl |
 | `TTL <key>` | seconds left, rounded to nearest second; `-1` if the key has no expiry, `-2` if it doesn't exist |
 | `EXPIRE <key> <seconds>` | `1` if key existed, `0` if not; `<seconds>` <= 0 deletes the key immediately |
+| `PEXPIREAT <key> <ms>` | `1` if key existed, `0` if not; sets an absolute deadline in Unix milliseconds; `<ms>` <= 0 deletes the key |
 | `DBSIZE` | the number of keys stored, including expired keys not yet reclaimed |
 
 `INCR` on a missing key treats it as 0 and stores 1. On a value that isn't a
@@ -124,7 +139,8 @@ src/hashtable.c  the key-value store
 src/resp.c       RESP2 reply encoders
 src/buffer.c     growable byte buffer
 src/mstime.c     mstime() function returns current time
-tests/           redis-reply comparison and lost reply tests
+src/aof.c        append-only log: record encoding, writes, fsync, startup replay
+tests/           redis-reply comparison, lost reply, and kill -9 restart tests
 ```
 
 **Protocol parsing is incremental.** One `recv()` is not one command: a command
@@ -155,116 +171,68 @@ reverse — a reply too large for the socket's send buffer goes out across as ma
 
 ## Design decisions
 
-**Keys and values carry explicit lengths.** Every string is a `(pointer, length)`
-pair from the parser through dispatch and into the table, and key comparison is
-length equality followed by `memcmp`. This makes the store binary-safe: a value
-containing a zero byte round-trips correctly, which Redis permits and a
-`strlen`-based implementation silently truncates. Stored copies are also
-NUL-terminated, but nothing relies on the terminator.
+**Keys and values carry explicit lengths.** Every string is a `(pointer, length)` pair compared with `memcmp`, so the store is binary-safe where `strlen` would truncate at a zero byte.
 
-**`ht_get` returns a pointer into the table, not a copy.** Lookups are zero-copy.
-The returned pointer is valid until the next `ht_*` call on that key, reads included, since a lookup that finds an expired key frees it. That is sufficient because the reply encoder copies the bytes into the output buffer immediately, and nothing stores a table pointer in a client.
+**`ht_get` returns a pointer into the table, not a copy.** It stays valid until the next `ht_*` call on that key, which is enough because replies copy the bytes immediately.
 
-**Growth rehashes by relinking existing nodes, not by reinserting them.** A
-resize allocates a new bucket array and moves each node into its new bucket by
-pointer assignment. Nothing is allocated or copied except the array itself. That
-keeps resizing cheap, and it preserves the guarantee above: because entries never
-move in memory, pointers returned by `ht_get` stay valid across a resize.
+**Growth rehashes by relinking existing nodes, not by reinserting them.** Only the bucket array is reallocated, so resizing is cheap and `ht_get` pointers survive it.
 
-**The table owns its keys and values.** The parser frees each argument as soon as
-dispatch returns, so the table copies both on insert and frees them on overwrite,
-delete, and teardown.
+**The table owns its keys and values.** It copies them on insert and frees them on overwrite, delete and teardown, because the parser frees each argument once dispatch returns.
 
-**An expiry is an absolute deadline stored on the entry.** Each node carries
-`expire_at`, wall-clock milliseconds since the Unix epoch, with `0` meaning no
-expiry. A deadline stays correct without being updated, so checking it is one
-comparison, and `TTL` converts back to seconds remaining. Wall-clock time rather
-than a monotonic clock because the deadline has to mean the same instant after a
-restart, once persistence exists. Keeping it on the node costs 8 bytes per key,
-including keys with no TTL. Redis instead keeps a separate table of only the keys
-that have one, which also lets its active expiry sample just those keys.
+**An expiry is an absolute deadline stored on the entry.** Wall-clock milliseconds mean the same instant after a restart and take one comparison to check, at a cost of 8 bytes on every key.
 
-**The clock is read once per command.** `now` is passed into every `ht_*` call
-instead of each lookup reading the clock itself, so a single command sees a
-single instant. Without that, `INCR` could find a key alive in its lookup and
-dead a millisecond later in its write. It also lets the table be tested with chosen times instead of sleeps.
+**The clock is read once per command.** `now` is passed into every `ht_*` call, so one command sees one instant and the table can be tested with chosen times.
 
-**`SET` clears a TTL; `INCR` keeps it.** A plain `SET` replaces the key
-entirely, while `INCR` changes only the number, matching Redis. Both go through
-`ht_set`, which takes the new deadline, with `-1` meaning keep the existing one.
-`-1` is only passed for a key the caller has just found alive.
+**`SET` clears a TTL; `INCR` keeps it.** Both go through `ht_set`, which takes the new deadline, with `-1` meaning keep the existing one.
 
-**Expired keys are reclaimed lazily and actively.** Every lookup treats an
-expired key as absent and frees it on the spot, which is what makes expiry
-correct. To bound how long unread dead keys hold memory, the event loop also runs
-a pass every 100 ms that scans the next 1000 buckets from a saved cursor and frees
-whatever has expired. `el_poll` waits at most 100 ms so an idle server still runs
-the pass, and the loop checks the clock after every batch of events so a busy one
-does too. The fixed bucket budget keeps each pass short, at the cost that a full
-sweep takes longer as the table grows.
+**Expired keys are reclaimed lazily and actively.** Lookups free expired keys on the spot, and a pass every 100 ms scans the next 1000 buckets to bound how long unread ones hold memory.
 
-**The kernel is reached only through `el.h`, so a second backend is a new file.**
-`server.c` holds an opaque `el_loop` and never sees a `kevent` or an
-`epoll_event`, so porting to Linux means writing `el_epoll.c` and changing
-nothing else. This is the structure Redis uses (`ae.c`, with `ae_kqueue.c` and
-`ae_epoll.c` behind it). The interface detail that makes it work is that
-`el_update` takes both the old and the new interest mask: epoll needs the old one
-to choose between ADD, MOD, and DEL, and kqueue needs the difference to know
-which filters to add and which to delete. With the caller owning the mask, both
-backends stay stateless.
+**The kernel is reached only through `el.h`, so a second backend is a new file.** `el_update` takes both the old and new interest mask, which keeps the kqueue and epoll backends stateless.
 
-**One `recv` per wakeup is enough, because the loop is level-triggered.** Both
-kqueue and epoll report a socket as ready whenever unread bytes are sitting in
-it, not only at the moment new bytes arrive, so a read that stops early is simply
-reported again on the next poll. That makes a fixed 16 KB read buffer safe
-against a request of any size, and it keeps the loop fair: a client sending 10 MB
-returns to `el_poll` after every chunk, so other connections are served in
-between rather than waiting for it to finish.
+**One `recv` per wakeup is enough, because the loop is level-triggered.** A socket with unread bytes is reported again on the next poll, so a fixed 16 KB read handles any request size and no client can hog the loop.
 
-**Replies track an offset, and write interest is registered only when needed.**
-`send` on a nonblocking socket takes as much as fits in the kernel's buffer and
-reports how much that was, so a client records how far into its output buffer it
-has got rather than consuming from the front — which would `memmove` the
-remaining megabytes after every call. Write interest is the mirror of the
-level-triggered tradeoff above: a socket with room in its send buffer is *always*
-writable, so registering for it up front would make `el_poll` return immediately,
-forever. It is registered only when a `send` comes up short, and dropped the
-moment the buffer drains.
+**Replies track an offset, and write interest is registered only when needed.** Consuming from the front would `memmove` the rest of the buffer on every `send`, and a socket with room is always writable, so permanent write interest would spin.
 
+**The log is the wire protocol.** Each write is appended as the RESP array a client would send, so replay reuses the incremental parser and `command_dispatch`.
 
+**Only successful changes are logged.** `command_dispatch` appends the record itself, and replay passes `NULL` so it never re-logs what it replays.
+
+**Deadlines are written as absolute times.** `SET … EX` is logged as `SET … PXAT` and `EXPIRE` as `PEXPIREAT`, so a restart doesn't restart every countdown.
+
+**Replay runs with the clock stopped.** With `now = 0` nothing expires mid-replay, which would otherwise let a later `INCR` recreate an expired key with no TTL.
+
+**A record is written before its reply is sent.** No client is told a write succeeded before it's in the log, and a failed write exits the server so memory and log agree on restart.
+
+**A torn last record is cut; anything else unreadable stops startup.** Appending after a partial record would corrupt the next write, while garbage mid-file means the log isn't one this server wrote.
+
+**The log is fsynced once a second.** A power cut loses at most about a second of writes, and macOS uses `fcntl(F_FULLFSYNC)` because its `fsync` stops at the drive's cache.
+
+**Replay happens before the port is bound.** No client can connect to a half-built table.
 
 ## Limitations
 
-- No persistence — the dataset is lost on shutdown.
-- Expired keys can stay in memory until a lookup touches them or the active pass reaches their bucket, and `DBSIZE` counts them until then. A full sweep takes about capacity / 1000 passes of 100 ms each.
-- Deadlines use the wall clock, so if the system clock jumps forward, keys expire early.
-- Only a kqueue backend, so macOS and BSD. `el.h` is the seam an epoll backend
-  would slot into.
-- **No cap on a client's output buffer.** A client that pipelines requests
-  without ever reading the replies will grow that buffer until the machine runs
-  out of memory. This is deliberate for v1 and matches Redis's default for
-  ordinary clients (`client-output-buffer-limit normal 0 0 0`).
-- Inline commands are not supported — the parser accepts only RESP arrays, so
-  typing commands straight into `nc` or `telnet` is a protocol error and
-  disconnects.
-- `accept` failing with `EMFILE` spins: the listener is level-triggered and stays
-  readable, so the loop retries as fast as it can until a descriptor frees up.
-- At most 1024 concurrent clients; higher file descriptors are refused and
-  closed.
-- No clean shutdown path — the process exits without freeing the table or the
-  remaining clients, so a leak check has no normal exit to report at.
-- `DEL` and `EXISTS` take a single key. Real Redis accepts several and returns
-  how many matched; the reply here is already shaped as a count, so multi-key
-  support is a loop rather than a rewrite.
-- `SET` supports only `EX`. Other options (`PX`, `NX`, `XX`, `KEEPTTL`, …) are rejected with `ERR syntax error` rather than silently ignored.
-- `EXPIRE` takes no options (`NX`/`XX`/`GT`/`LT`), and `PEXPIRE`, `PTTL` and `PERSIST` aren't implemented.
+- Expired keys hold memory until a lookup or the active pass reaches them, and `DBSIZE` counts them until then.
+- Deadlines use the wall clock, so a forward clock jump expires keys early.
+- Only a kqueue backend (macOS and BSD); an epoll backend would slot in behind `el.h`.
+- **No cap on a client's output buffer**, so a client that never reads its replies can exhaust memory, the same as Redis's default for ordinary clients.
+- Inline commands aren't supported, so typing commands into `nc` or `telnet` is a protocol error.
+- `accept` failing with `EMFILE` spins until a descriptor frees up, because the listener stays readable.
+- At most 1024 concurrent clients; higher file descriptors are refused.
+- No clean shutdown path, so leak checkers have no normal exit to report at.
+- `DEL` and `EXISTS` take a single key, where Redis accepts several.
+- `SET` supports only `EX` and `PXAT`; other options are rejected with `ERR syntax error`.
+- `EXPIRE` takes no options, and `PEXPIRE`, `PTTL` and `PERSIST` aren't implemented.
 - A request may contain at most 32 arguments.
-- The bucket array never shrinks, so the capacity stays at its high-water mark after
-  deletions.
+- The bucket array never shrinks after deletions.
+- A power cut can lose up to about a second of acknowledged writes; the restart test uses `kill -9`, so it can't test this.
+- The once-a-second `fsync` runs on the event loop, so every client waits for it.
+- The log only grows; there is no rewrite or compaction.
+- The log is always `appendonly.aof` in the working directory.
+- A newly created log's directory entry isn't fsynced.
 
 ## Benchmarks
 
-`redis-benchmark -t set,get -n 100000 -q`, reddb built with `make release` at commit `e734054` (before expiration was added),
+`redis-benchmark -t set,get -n 100000 -q`, reddb built with `make release` at commit `e734054` (before expiration and persistence were added),
 Redis with persistence off, on an M4 MacBook Pro over loopback. SET / GET
 requests per second:
 
@@ -280,4 +248,4 @@ either server does. Throughput at 500 clients is within a few percent of 10.
 Adding `-P 16` to pipeline sixteen commands per round trip removes the syscall
 cost and reddb reaches 3.1M / 3.2M against Redis's 1.9M / 2.0M. That gap is the
 price of what Redis does per command and reddb doesn't — ACLs,
-replication and AOF hooks, keyspace notifications, RESP3. reddb has ten commands and none of it.
+replication, keyspace notifications, RESP3. reddb has eleven commands and none of it.
