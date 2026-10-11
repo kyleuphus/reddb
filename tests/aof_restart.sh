@@ -60,6 +60,16 @@ crash
 start
 check "writes after the repair replay" tear "$($R GET after)"
 
+# a write followed by bad bytes in one packet is logged once, not again by the next client
+exec 3<>/dev/tcp/127.0.0.1/$P
+printf '*2\r\n$4\r\nINCR\r\n$4\r\ndupe\r\noops\r\n' >&3
+sleep 0.2
+exec 3>&-
+$R PING >/dev/null
+crash
+start
+check "write before a protocol error logged once" 1 "$($R GET dupe)"
+
 crash
 printf 'garbage\r\n' >>"$DIR/appendonly.aof" # corruption, not a torn tail
 start

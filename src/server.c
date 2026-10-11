@@ -83,6 +83,7 @@ static b8 read_client(el_loop* l, client* c, ht* db, buffer* aof_buf,
 
         parse_status status = client_process_input(c, db, aof_buf);
         if (c->out.oom) {
+            aof_buf->len = 0;
             return false;
         }
 
