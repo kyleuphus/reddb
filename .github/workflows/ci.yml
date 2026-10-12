@@ -37,3 +37,18 @@ jobs:
       run: | 
         ./tests/aof_restart.sh | tee aof.out 
         grep -q 'ALL PASSED' aof.out
+
+    - name: smoke test
+      run: |
+        mkdir -p smoke && cd smoke 
+        ../reddb 6380 > server.log 2>&1 &
+        SERVER=$!
+        for i in $(seq 50); do
+          redis-cli -p 6380 PING && break
+          sleep 0.1
+        done
+        redis-benchmark -p 6380 -t set,get -n 20000 -c 50 -q
+        cat server.log
+
+
+
