@@ -49,6 +49,23 @@ jobs:
         done
         redis-benchmark -p 6380 -t set,get -n 20000 -c 50 -q
         cat server.log
+    - name: ttl vs redis 
+      if: runner.os == 'Linux'
+      run: |
+        mkdir -p ttl && cd ttl 
+        redis-server --port 6390 --save '' --appendonly no --daemonize yes
+        ../reddb 6388 &
+        for i in $(seq 50); do
+          redis-cli -p 6390 PING && break
+          sleep 0.1
+        done
+        for i in $(seq 50); do
+          redis-cli -p 6388 PING && break
+          sleep 0.1
+        done
+        diff <(../tests/ttl_vs_redis.sh 6390) <(../tests/ttl_vs_redis.sh 6388) && echo IDENTICAL
+
+      
 
 
 
