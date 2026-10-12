@@ -82,8 +82,15 @@ static b8 read_client(el_loop* l, client* c, ht* db, buffer* aof_buf,
         }
 
         parse_status status = client_process_input(c, db, aof_buf);
+
+        if (aof_buf->oom ||
+            !aof_write_all(log_fd, aof_buf->data, aof_buf->len)) {
+            perror("aof write");
+            exit(1);
+        }
+        aof_buf->len = 0;
+
         if (c->out.oom) {
-            aof_buf->len = 0;
             return false;
         }
 
@@ -94,17 +101,11 @@ static b8 read_client(el_loop* l, client* c, ht* db, buffer* aof_buf,
         }
 
         if (c->out.len > 0) {
-            if (aof_buf->oom ||
-                !aof_write_all(log_fd, aof_buf->data, aof_buf->len)) {
-                perror("aof write");
-                exit(1);
-            }
             if (!flush_buf(l, c)) {
                 return false;
             }
         }
 
-        aof_buf->len = 0;
         return true;
     } else if (n == 0) {
         return false;
