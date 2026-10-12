@@ -1,0 +1,25 @@
+name: CI
+
+on: push
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        c_compiler: [gcc, clang]
+        exclude:
+          - os: ubuntu-latest
+            c_compiler: clang
+          - os: macos-latest
+            c_compiler: gcc
+
+    steps: 
+    - uses: actions/checkout@v4
+
+    - name: Build
+      run: make CC=${{ matrix.c_compiler }}
+          
