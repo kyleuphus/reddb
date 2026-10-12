@@ -2,7 +2,12 @@ name: CI
 
 on: push
 
+on: workflow_dispatch
+
+
 jobs:
+
+
   build:
     runs-on: ${{ matrix.os }}
 
@@ -18,8 +23,20 @@ jobs:
             c_compiler: gcc
 
     steps: 
+    - name: install redis (linux)
+      if: runner.os == 'Linux'
+      run: sudo apt-get update && sudo apt-get install redis-server -y
+  
+    - name: install redis (macos)
+      if: runner.os == 'macOS'
+      run: brew install redis
+
     - uses: actions/checkout@v4
 
     - name: Build
-      run: make CC=${{ matrix.c_compiler }}
-          
+      run: make CC=${{ matrix.c_compiler }} sanitize
+
+    - name: run aof_restart
+      run: | 
+        ./tests/aof_restart.sh | tee aof.out 
+        grep -q 'ALL PASSED' aof.out
