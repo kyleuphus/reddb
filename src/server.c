@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "server.h"
 #include "aof.h"
 #include "buffer.h"
@@ -21,6 +23,13 @@
 
 #define MAX_CLIENTS 1024
 static client* clients[MAX_CLIENTS];
+
+static volatile sig_atomic_t end_process = 0;
+
+static void handle_signal(int sig) {
+    (void)sig;
+    end_process = 1;
+}
 
 static void close_client(el_loop* loop, client* c) {
     el_update(loop, c->fd, c->mask, EL_NONE);
@@ -215,6 +224,14 @@ int server_run(u16 port) {
         return 1;
     }
 
+    struct sigaction sa = {0};
+    sa.sa_handler = handle_signal;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
+
     signal(SIGPIPE, SIG_IGN);
     int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_fd < 0) {
@@ -257,12 +274,15 @@ int server_run(u16 port) {
 
     buffer aof_buf;
     buf_init(&aof_buf);
-    for (;;) {
+
+    i32 failed = 0;
+    while (!end_process) {
 
         i32 n = el_poll(loop, fired, 100);
 
         if (n < 0) {
             perror("el_poll");
+            failed = 1;
             break;
         }
 
@@ -305,7 +325,8 @@ int server_run(u16 port) {
         if (now >= next_fsync) {
             if (!aof_fsync(log_fd)) {
                 perror("fsync");
-                return 1;
+                failed = 1;
+                break;
             }
             next_fsync = now + 1000;
         }
@@ -316,9 +337,12 @@ int server_run(u16 port) {
             close_client(loop, clients[i]);
         }
     }
+    aof_fsync(log_fd);
+    buf_free(&aof_buf);
     el_free(loop);
+    close(log_fd);
     close(listen_fd);
     ht_free(db);
 
-    return 1;
+    return failed;
 }
