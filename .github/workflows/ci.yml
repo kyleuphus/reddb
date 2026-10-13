@@ -48,7 +48,10 @@ jobs:
           sleep 0.1
         done
         redis-benchmark -p 6380 -t set,get -n 20000 -c 50 -q
+        kill -TERM $SERVER
+        wait $SERVER
         cat server.log
+
     - name: ttl vs redis 
       if: runner.os == 'Linux'
       run: |
@@ -65,6 +68,10 @@ jobs:
         done
         diff <(../tests/ttl_vs_redis.sh 6390) <(../tests/ttl_vs_redis.sh 6388) && echo IDENTICAL
 
+    - name: run shutdown
+      run: | 
+        ./tests/shutdown.sh | tee shutdown.out 
+        grep -q 'ALL PASSED' shutdown.out
       
 
 
